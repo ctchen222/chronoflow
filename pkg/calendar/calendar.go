@@ -8,6 +8,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var (
+	dayHighlight = lipgloss.Color("#888888")
+)
+
 type Model struct {
 	selectedDate time.Time
 	cursor       time.Time
@@ -17,7 +21,10 @@ type Model struct {
 
 func New() *Model {
 	now := time.Now()
-	return &Model{selectedDate: now, cursor: now}
+	return &Model{
+		selectedDate: now,
+		cursor:       now,
+	}
 }
 
 func (m *Model) SetSize(width, height int) {
@@ -65,30 +72,30 @@ func (m *Model) View() string {
 		Background(lipgloss.Color("#7D56F4")).
 		Padding(0, 1).
 		Width(m.width).
-		Render(m.cursor.Format("2006-01-02"))
+		Render(m.cursor.Format("January 2006"))
 
 	// Weekday headers
 	weekdays := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-	
-    // Distribute width
-    baseCellWidth := m.width / 7
-    remainder := m.width % 7
-    cellWidths := make([]int, 7)
-    for i := 0; i < 7; i++ {
-        cellWidths[i] = baseCellWidth
-        if remainder > 0 {
-            cellWidths[i]++
-            remainder--
-        }
-    }
+
+	// Distribute width
+	baseCellWidth := m.width / 7
+	remainder := m.width % 7
+	cellWidths := make([]int, 7)
+	for i := 0; i < 7; i++ {
+		cellWidths[i] = baseCellWidth
+		if remainder > 0 {
+			cellWidths[i]++
+			remainder--
+		}
+	}
 
 	weekdayViews := make([]string, 7)
 	for i, day := range weekdays {
-		weekdayViews[i] = lipgloss.NewStyle().
+		style := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Width(cellWidths[i]).
-			Align(lipgloss.Center).
-			Render(day)
+			Align(lipgloss.Center)
+		weekdayViews[i] = style.Render(day)
 	}
 	weekdayHeader := lipgloss.JoinHorizontal(lipgloss.Top, weekdayViews...)
 
@@ -97,16 +104,16 @@ func (m *Model) View() string {
 	daysInMonth := time.Date(m.selectedDate.Year(), m.selectedDate.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 
 	// Distribute height
-    baseCellHeight := (m.height - 2) / 6 // -2 for header and weekday header
-    heightRemainder := (m.height - 2) % 6
-    cellHeights := make([]int, 6)
-    for i := 0; i < 6; i++ {
-        cellHeights[i] = baseCellHeight
-        if heightRemainder > 0 {
-            cellHeights[i]++
-            heightRemainder--
-        }
-    }
+	baseCellHeight := (m.height - 2) / 6 // -2 for header and weekday header
+	heightRemainder := (m.height - 2) % 6
+	cellHeights := make([]int, 6)
+	for i := 0; i < 6; i++ {
+		cellHeights[i] = baseCellHeight
+		if heightRemainder > 0 {
+			cellHeights[i]++
+			heightRemainder--
+		}
+	}
 
 	var allRows []string
 	day := 1
@@ -116,17 +123,18 @@ func (m *Model) View() string {
 			style := lipgloss.NewStyle().
 				Width(cellWidths[j]).
 				Height(cellHeights[i]).
-				Border(lipgloss.NormalBorder(), false)
-            style = style.BorderBottom(true)
-            if j != 6 {
-                style = style.BorderRight(true)
-            }
+				Border(lipgloss.NormalBorder(), false).
+				Align(lipgloss.Center)
+			style = style.BorderBottom(true)
+			if j != 6 {
+				style = style.BorderRight(true)
+			}
 
 			if (i == 0 && j < int(firstDay.Weekday())) || day > daysInMonth {
 				rowViews = append(rowViews, style.Render(""))
 			} else {
 				if day == m.cursor.Day() && m.selectedDate.Month() == m.cursor.Month() && m.selectedDate.Year() == m.cursor.Year() {
-					style = style.Background(lipgloss.Color("#888888"))
+					style = style.Background(dayHighlight)
 				}
 				rowViews = append(rowViews, style.Render(fmt.Sprintf("%d", day)))
 				day++

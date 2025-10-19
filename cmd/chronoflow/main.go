@@ -5,11 +5,15 @@ import (
 	"os"
 
 	"ctchen222/chronoflow/pkg/calendar"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type model struct {
 	calendar *calendar.Model
+	width    int
+	height   int
 }
 
 func (m *model) Init() tea.Cmd {
@@ -17,10 +21,12 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.calendar.SetSize(msg.Width, msg.Height)
+		m.width = msg.Width
+		m.height = msg.Height
+		calendarWidth := int(float64(m.width) * 0.7)
+		m.calendar.SetSize(calendarWidth, m.height)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -33,7 +39,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
-	return m.calendar.View()
+	calendarWidth := int(float64(m.width) * 0.7)
+	rightPanelWidth := m.width - calendarWidth
+
+	rightPanel := lipgloss.NewStyle().
+		Width(rightPanelWidth).
+		Height(m.height).
+		Border(lipgloss.NormalBorder(), true).
+		Render("Future Component")
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.calendar.View(), rightPanel)
 }
 
 func main() {
