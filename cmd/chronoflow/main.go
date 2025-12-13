@@ -39,16 +39,33 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
+	// Re-calculate widths here to ensure they are always in sync.
 	calendarWidth := int(float64(m.width) * 0.7)
 	rightPanelWidth := m.width - calendarWidth
 
+	// The calendar view string, which should have a width of `calendarWidth`.
+	calendarView := m.calendar.View()
+
+	// --- Right Panel ---
+	selectedDateStr := m.calendar.Cursor().Format("2006-01-02 Monday")
+	rightPanelContent := lipgloss.NewStyle().
+		Bold(true).
+		Padding(1, 2).
+		Render("Selected Date:\n" + selectedDateStr)
+
+	// Use a styled panel with a rounded border and color to make it distinct.
 	rightPanel := lipgloss.NewStyle().
 		Width(rightPanelWidth).
-		Height(m.height).
-		Border(lipgloss.NormalBorder(), true).
-		Render("Future Component")
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("238")).
+		Padding(1, 2).
+		Render(rightPanelContent)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.calendar.View(), rightPanel)
+	// --- Join horizontally ---
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		calendarView,
+		rightPanel,
+	)
 }
 
 func main() {
