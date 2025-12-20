@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -18,7 +19,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const dbFile = "todos.json"
+const appName = "chronoflow"
+
+// getDataDir returns the application data directory path
+func getDataDir() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return filepath.Join(homeDir, "."+appName)
+}
+
+// getDataFilePath returns the full path to the todos.json file
+func getDataFilePath() string {
+	return filepath.Join(getDataDir(), "todos.json")
+}
 
 // Priority levels
 const (
@@ -229,6 +244,8 @@ func (m *model) calculateStats() todo.Stats {
 				stats.TotalPeriod++
 				if item.ItemComplete {
 					stats.CompletedPeriod++
+				} else if isPast {
+					stats.OverduePeriod++
 				}
 			}
 		}
@@ -1030,13 +1047,19 @@ func (m *model) View() string {
 
 // saveTodos saves the current to-do items to the JSON database file.
 func saveTodos() {
+	// Ensure data directory exists
+	if err := os.MkdirAll(getDataDir(), 0755); err != nil {
+		fmt.Printf("Error creating data directory: %v\n", err)
+		return
+	}
+
 	data, err := json.MarshalIndent(todos, "", "  ")
 	if err != nil {
 		fmt.Printf("Error marshaling todos to JSON: %v\n", err)
 		return
 	}
 
-	err = os.WriteFile(dbFile, data, 0644)
+	err = os.WriteFile(getDataFilePath(), data, 0644)
 	if err != nil {
 		fmt.Printf("Error writing to db file: %v\n", err)
 	}
@@ -1044,7 +1067,7 @@ func saveTodos() {
 
 // loadTodos loads the to-do items from the JSON database file.
 func loadTodos() {
-	data, err := os.ReadFile(dbFile)
+	data, err := os.ReadFile(getDataFilePath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return // No file, nothing to load

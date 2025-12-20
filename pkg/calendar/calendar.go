@@ -312,11 +312,6 @@ func (m *Model) View() string {
 				BorderBottom(true).
 				BorderForeground(lipgloss.Color("238"))
 
-			// Add top border for first row
-			if i == 0 {
-				style = style.BorderTop(true)
-			}
-
 			if j != 6 {
 				style = style.BorderRight(true)
 			}
