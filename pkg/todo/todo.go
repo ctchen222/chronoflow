@@ -15,12 +15,13 @@ var (
 
 // Stats holds statistics about todos
 type Stats struct {
-	TotalAll       int    // total todos across all dates
-	CompletedAll   int    // completed todos across all dates
-	OverdueAll     int    // overdue todos across all dates
-	TotalPeriod    int    // todos for current period (week/month)
-	CompletedPeriod int   // completed for current period
-	PeriodLabel    string // "This Week" or "This Month"
+	TotalAll        int    // total todos across all dates
+	CompletedAll    int    // completed todos across all dates
+	OverdueAll      int    // overdue todos across all dates
+	TotalPeriod     int    // todos for current period (week/month)
+	CompletedPeriod int    // completed for current period
+	OverduePeriod   int    // overdue todos for current period (week/month)
+	PeriodLabel     string // "This Week" or "This Month"
 }
 
 type Model struct {
@@ -108,8 +109,8 @@ func (m Model) View() string {
 
 		statsText := labelStyle.Render(m.stats.PeriodLabel) + ": " +
 			completedStyle.Render(fmt.Sprintf("%d/%d", m.stats.CompletedPeriod, m.stats.TotalPeriod))
-		if m.stats.OverdueAll > 0 {
-			statsText += "  " + overdueStyle.Render(fmt.Sprintf("Overdue: %d", m.stats.OverdueAll))
+		if m.stats.OverduePeriod > 0 {
+			statsText += "  " + overdueStyle.Render(fmt.Sprintf("Overdue: %d", m.stats.OverduePeriod))
 		}
 
 		content = lipgloss.JoinVertical(lipgloss.Left,

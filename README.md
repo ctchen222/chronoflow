@@ -109,7 +109,7 @@ chronoflow
 
 ## Data Storage
 
-Todos are stored in `todos.json` in the current directory. The file is automatically created on first use.
+Todos are stored in `~/.chronoflow/todos.json`. The directory and file are automatically created on first use.
 
 ## Development
 
