@@ -43,6 +43,9 @@ type EditingState struct {
 	Focus       EditFocus
 	TitleView   string // rendered title input
 	DescView    string // rendered desc input
+	// Preview fields
+	PreviewEnabled bool   // whether preview pane is visible
+	PreviewContent string // rendered markdown preview
 }
 
 // DeleteState holds the state for the delete confirmation modal

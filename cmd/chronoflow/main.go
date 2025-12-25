@@ -60,6 +60,10 @@ type model struct {
 	deletingTitle   string
 	searchResults   []service.SearchResult
 	searchIndex     int
+
+	// Preview state
+	markdownRenderer *ui.MarkdownRenderer
+	previewEnabled   bool
 }
 
 // updateTodos sets the items for the todo list based on the selected date.
@@ -156,10 +160,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.calendar.SetSize(calInnerW, calInnerH)
 		m.todo.SetSize(todoInnerW, todoInnerH)
 
-		// Also resize edit form inputs
-		inputWidth := msg.Width / 3
-		m.titleInput.Width = inputWidth
-		m.descInput.SetWidth(inputWidth)
+		// Resize edit form inputs based on responsive modal dimensions
+		dims := m.viewRenderer.CalculateModalDimensions(m.previewEnabled)
+		m.titleInput.Width = dims.InputWidth
+		m.descInput.SetWidth(dims.InputWidth)
+
+		// Update markdown renderer width for preview pane
+		if dims.ShowPreview {
+			m.markdownRenderer.SetWidth(dims.PreviewWidth - 4) // Account for padding
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -293,6 +302,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.titleInput.Blur()
 				m.descInput.Blur()
 				return m, nil
+			case "ctrl+p":
+				// Toggle preview pane
+				m.previewEnabled = !m.previewEnabled
+				// Recalculate dimensions
+				dims := m.viewRenderer.CalculateModalDimensions(m.previewEnabled)
+				m.titleInput.Width = dims.InputWidth
+				m.descInput.SetWidth(dims.InputWidth)
+				if dims.ShowPreview {
+					m.markdownRenderer.SetWidth(dims.PreviewWidth - 4)
+				}
+				return m, nil
 			case "ctrl+1":
 				m.editingPriority = domain.PriorityLow
 				return m, nil
@@ -418,15 +438,23 @@ func (m *model) View() string {
 		content = m.viewRenderer.RenderMain(mainState)
 
 	case ui.StateEditing:
+		// Render markdown preview from description
+		previewContent := ""
+		if m.previewEnabled {
+			previewContent = m.markdownRenderer.Render(m.descInput.Value())
+		}
+
 		editState := ui.EditingState{
-			IsNew:      m.editingIndex == -1,
-			Date:       m.calendar.Cursor(),
-			TitleValue: m.titleInput.Value(),
-			DescValue:  m.descInput.Value(),
-			Priority:   m.editingPriority,
-			Focus:      m.editFocus,
-			TitleView:  m.titleInput.View(),
-			DescView:   m.descInput.View(),
+			IsNew:          m.editingIndex == -1,
+			Date:           m.calendar.Cursor(),
+			TitleValue:     m.titleInput.Value(),
+			DescValue:      m.descInput.Value(),
+			Priority:       m.editingPriority,
+			Focus:          m.editFocus,
+			TitleView:      m.titleInput.View(),
+			DescView:       m.descInput.View(),
+			PreviewEnabled: m.previewEnabled,
+			PreviewContent: previewContent,
 		}
 		content = m.viewRenderer.RenderEditing(editState)
 
@@ -486,6 +514,9 @@ func main() {
 	si.CharLimit = 100
 	si.Width = 38
 
+	// Initialize Markdown Renderer
+	mdRenderer := ui.NewMarkdownRenderer(40) // Initial width, will be resized
+
 	m := &model{
 		// Services
 		todoService:     todoService,
@@ -506,6 +537,10 @@ func main() {
 		focus:        ui.FocusCalendar,
 		editingIndex: -1,
 		editFocus:    ui.FocusTitle,
+
+		// Preview
+		markdownRenderer: mdRenderer,
+		previewEnabled:   true, // Preview enabled by default
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

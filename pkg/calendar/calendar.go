@@ -140,7 +140,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
-		return "loading..."
+		return ""
 	}
 
 	// Render week view if in week mode

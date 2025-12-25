@@ -8,6 +8,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Constants for responsive modal
+const (
+	ModalWidthPercent = 0.70 // 70% of terminal width
+	ModalMinWidth     = 50   // Minimum modal width
+	ModalMaxWidth     = 140  // Maximum modal width
+	MinPreviewWidth   = 30   // Minimum width to show preview
+)
+
+// ModalDimensions holds calculated modal dimensions
+type ModalDimensions struct {
+	TotalWidth   int
+	EditorWidth  int
+	PreviewWidth int
+	InputWidth   int
+	ShowPreview  bool
+}
+
 // ViewRenderer handles all view rendering logic
 type ViewRenderer struct {
 	width  int
@@ -33,6 +50,48 @@ func (v *ViewRenderer) Width() int {
 // Height returns the current height
 func (v *ViewRenderer) Height() int {
 	return v.height
+}
+
+// CalculateModalDimensions calculates responsive modal dimensions
+func (v *ViewRenderer) CalculateModalDimensions(previewEnabled bool) ModalDimensions {
+	// Calculate base modal width (70% of terminal)
+	modalWidth := int(float64(v.width) * ModalWidthPercent)
+
+	// Apply min/max bounds
+	if modalWidth < ModalMinWidth {
+		modalWidth = ModalMinWidth
+	}
+	if modalWidth > ModalMaxWidth {
+		modalWidth = ModalMaxWidth
+	}
+
+	// Account for modal padding and borders (2 padding + 2 border each side = 8)
+	innerWidth := modalWidth - 8
+
+	dims := ModalDimensions{
+		TotalWidth:  modalWidth,
+		ShowPreview: false,
+	}
+
+	// Determine if we can show split view
+	// Need at least MinPreviewWidth for each pane plus 3 for separator
+	minSplitWidth := (MinPreviewWidth * 2) + 3
+
+	if previewEnabled && innerWidth >= minSplitWidth {
+		dims.ShowPreview = true
+		// Calculate split (50/50)
+		halfWidth := (innerWidth - 3) / 2 // -3 for separator
+		dims.EditorWidth = halfWidth
+		dims.PreviewWidth = innerWidth - halfWidth - 3
+		dims.InputWidth = halfWidth - 4 // Account for input padding/border
+	} else {
+		// Full-width editor (no preview)
+		dims.EditorWidth = innerWidth
+		dims.PreviewWidth = 0
+		dims.InputWidth = innerWidth - 4
+	}
+
+	return dims
 }
 
 // RenderMain renders the main viewing state with calendar and todo panels
@@ -73,7 +132,7 @@ func (v *ViewRenderer) RenderMain(state MainViewState) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, calView, todoView)
 }
 
-// RenderEditing renders the editing modal
+// RenderEditing renders the editing modal with optional markdown preview
 func (v *ViewRenderer) RenderEditing(state EditingState) string {
 	var accentColor, headerIcon string
 	if state.IsNew {
@@ -83,6 +142,9 @@ func (v *ViewRenderer) RenderEditing(state EditingState) string {
 		accentColor = "#8BE9FD" // Cyan for edit
 		headerIcon = "~"
 	}
+
+	// Calculate responsive dimensions
+	dims := v.CalculateModalDimensions(state.PreviewEnabled)
 
 	// Header
 	headerText := "New Todo"
@@ -102,6 +164,78 @@ func (v *ViewRenderer) RenderEditing(state EditingState) string {
 		MarginBottom(1)
 	date := dateStyle.Render(dateText)
 
+	// Build editor column
+	editorColumn := v.renderEditorColumn(state, accentColor, dims.InputWidth)
+
+	var modalContent string
+	if dims.ShowPreview {
+		// Fixed height for both columns to ensure alignment
+		boxHeight := 17
+		editorInnerWidth := dims.EditorWidth - 4  // Account for border and padding
+		previewInnerWidth := dims.PreviewWidth - 4
+
+		// Split view layout - use bordered boxes for clean separation
+		previewColumn := v.renderPreviewColumn(state.PreviewContent, previewInnerWidth)
+
+		// Place content in fixed-size containers first
+		editorContent := lipgloss.Place(editorInnerWidth, boxHeight, lipgloss.Left, lipgloss.Top, editorColumn)
+		previewContent := lipgloss.Place(previewInnerWidth, boxHeight, lipgloss.Left, lipgloss.Top, previewColumn)
+
+		// Editor box with border
+		editorBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(accentColor)).
+			Padding(0, 1).
+			Render(editorContent)
+
+		// Preview box with border (same height as editor)
+		previewBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#555")).
+			Padding(0, 1).
+			Render(previewContent)
+
+		// Join columns horizontally with small gap
+		splitView := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			editorBox,
+			" ", // Small gap between boxes
+			previewBox,
+		)
+
+		modalContent = lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			date,
+			splitView,
+		)
+	} else {
+		// Single column layout (original behavior)
+		modalContent = lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			date,
+			editorColumn,
+		)
+	}
+
+	// Modal box with background
+	modalBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(accentColor)).
+		Padding(1, 2).
+		Width(dims.TotalWidth).
+		Render(modalContent)
+
+	// Center the modal in the available space
+	bgHeight := v.height - 1 // exclude help bar
+	return lipgloss.Place(v.width, bgHeight,
+		lipgloss.Center, lipgloss.Center,
+		modalBox,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("#333")))
+}
+
+// renderEditorColumn renders the editor inputs column
+func (v *ViewRenderer) renderEditorColumn(state EditingState, accentColor string, inputWidth int) string {
 	// Title input with label
 	titleLabelStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#888"))
@@ -113,7 +247,7 @@ func (v *ViewRenderer) RenderEditing(state EditingState) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(titleBorderColor).
 		Padding(0, 1).
-		Width(60)
+		Width(inputWidth)
 	titleSection := lipgloss.JoinVertical(lipgloss.Left,
 		titleLabelStyle.Render("Title"),
 		titleInputStyle.Render(state.TitleView),
@@ -131,38 +265,42 @@ func (v *ViewRenderer) RenderEditing(state EditingState) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(descBorderColor).
 		Padding(0, 1).
-		Width(60)
+		Width(inputWidth)
 	descSection := lipgloss.JoinVertical(lipgloss.Left,
-		descLabelStyle.Render("Description (optional)"),
+		descLabelStyle.Render("Description (Markdown supported)"),
 		descInputStyle.Render(state.DescView),
 	)
 
 	// Priority selector
 	prioritySection := v.renderPrioritySelector(state.Priority, accentColor)
 
-	// Combine all modal content
-	modalContent := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		date,
+	return lipgloss.JoinVertical(lipgloss.Left,
 		titleSection,
 		descSection,
 		prioritySection,
 	)
+}
 
-	// Modal box with background
-	modalBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(accentColor)).
-		Padding(1, 2).
-		Render(modalContent)
+// renderPreviewColumn renders the markdown preview column
+func (v *ViewRenderer) renderPreviewColumn(previewContent string, width int) string {
+	// Preview header
+	previewHeaderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7D56F4")).
+		Bold(true).
+		MarginBottom(1)
+	previewHeader := previewHeaderStyle.Render("Preview")
 
-	// Center the modal in the available space
-	bgHeight := v.height - 1 // exclude help bar
-	return lipgloss.Place(v.width, bgHeight,
-		lipgloss.Center, lipgloss.Center,
-		modalBox,
-		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("#333")))
+	// Preview content area (no border - outer box provides it)
+	previewStyle := lipgloss.NewStyle().
+		Width(width).
+		Height(12)
+
+	previewArea := previewStyle.Render(previewContent)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		previewHeader,
+		previewArea,
+	)
 }
 
 // renderPrioritySelector renders the priority selection row
@@ -398,6 +536,7 @@ func (v *ViewRenderer) RenderHelpBar(state AppState, focus AppFocus) string {
 		}
 	case StateEditing:
 		keys = keyStyle.Render("Tab") + descStyle.Render(" switch field") + sep +
+			keyStyle.Render("Ctrl+P") + descStyle.Render(" preview") + sep +
 			keyStyle.Render("Enter") + descStyle.Render(" save") + sep +
 			keyStyle.Render("Esc") + descStyle.Render(" cancel")
 	case StateConfirmingDelete:
