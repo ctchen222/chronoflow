@@ -140,7 +140,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
-		return "loading..."
+		return ""
 	}
 
 	// Render week view if in week mode
@@ -311,11 +311,6 @@ func (m *Model) View() string {
 				Align(lipgloss.Center, lipgloss.Center).
 				BorderBottom(true).
 				BorderForeground(lipgloss.Color("238"))
-
-			// Add top border for first row
-			if i == 0 {
-				style = style.BorderTop(true)
-			}
 
 			if j != 6 {
 				style = style.BorderRight(true)
