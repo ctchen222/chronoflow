@@ -4,10 +4,34 @@ import "time"
 
 // Todo represents a todo item (pure data, no UI concerns)
 type Todo struct {
-	Title    string   `json:"title"`
-	Desc     string   `json:"desc"`
-	Complete bool     `json:"completed"`
-	Priority Priority `json:"priority"`
+	Title     string   `json:"title"`
+	Desc      string   `json:"desc"`
+	Complete  bool     `json:"completed"`
+	Priority  Priority `json:"priority"`
+	StartTime *string  `json:"start_time,omitempty"` // "HH:MM" format, nil = unscheduled
+	EndTime   *string  `json:"end_time,omitempty"`   // "HH:MM" format
+}
+
+// IsScheduled returns true if the todo has a scheduled start time
+func (t Todo) IsScheduled() bool {
+	return t.StartTime != nil
+}
+
+// Duration returns the duration of a scheduled todo
+// Returns 0 if the todo is not scheduled or has invalid times
+func (t Todo) Duration() time.Duration {
+	if t.StartTime == nil || t.EndTime == nil {
+		return 0
+	}
+	start, err := time.Parse("15:04", *t.StartTime)
+	if err != nil {
+		return 0
+	}
+	end, err := time.Parse("15:04", *t.EndTime)
+	if err != nil {
+		return 0
+	}
+	return end.Sub(start)
 }
 
 // NewTodo creates a new Todo with the given title
