@@ -20,4 +20,5 @@ Track these steps as TODOs and complete them one by one.
 
 **Reference**
 - Use `openspec show <id> --json --deltas-only` if you need additional context from the proposal while implementing.
+- Use claude skill tui-visual-testing to help generate visual test cases if applicable.
 <!-- OPENSPEC:END -->
