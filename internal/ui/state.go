@@ -15,6 +15,9 @@ const (
 	StateEditing
 	StateConfirmingDelete
 	StateSearching
+	StateHelp
+	StateGoToDate
+	StateScheduling
 )
 
 // AppFocus determines which panel is currently focused
@@ -66,4 +69,27 @@ type MainViewState struct {
 	CalendarView string
 	TodoView     string
 	Focus        AppFocus
+}
+
+// GoToDateState holds the state for the go-to-date modal
+type GoToDateState struct {
+	InputView  string // rendered date input
+	InputValue string
+	ErrorMsg   string // error message for invalid date
+}
+
+// SchedulingState holds the state for the schedule input modal
+type SchedulingState struct {
+	TaskTitle  string // title of the task being scheduled
+	TaskIndex  int    // original index in the todo list
+	InputView  string // rendered time input
+	InputValue string
+	ErrorMsg   string // error message for invalid time
+}
+
+// DayViewContext holds Day View state for help bar rendering
+type DayViewContext struct {
+	IsInDayView bool // whether we're in Day View
+	IsListMode  bool // true = List Mode, false = Timeline Mode
+	IsTimeline  bool // Timeline focus (vs Unscheduled focus) in Timeline Mode
 }

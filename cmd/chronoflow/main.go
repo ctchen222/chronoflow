@@ -20,6 +20,10 @@ import (
 )
 
 const appName = "chronoflow"
+const statusMessageDuration = 2 * time.Second
+
+// clearStatusMsg is sent when the status message should be cleared
+type clearStatusMsg struct{}
 
 // getDataDir returns the application data directory path
 func getDataDir() string {
@@ -64,6 +68,19 @@ type model struct {
 	// Preview state
 	markdownRenderer *ui.MarkdownRenderer
 	previewEnabled   bool
+
+	// Status message state
+	statusMessage string
+	statusType    string // "success", "warning", "info", "priority"
+
+	// Go-to-date state
+	dateInput textinput.Model
+	dateError string
+
+	// Scheduling state
+	scheduleInput     textinput.Model
+	schedulingTaskIdx int    // Original index in the full todo list
+	scheduleError     string
 }
 
 // updateTodos sets the items for the todo list based on the selected date.
@@ -132,6 +149,89 @@ func (m *model) jumpToSearchResult() {
 	m.focus = ui.FocusTodo
 }
 
+// setStatus sets a status message and returns a command to clear it after a delay
+func (m *model) setStatus(message, statusType string) tea.Cmd {
+	m.statusMessage = message
+	m.statusType = statusType
+	return tea.Tick(statusMessageDuration, func(t time.Time) tea.Msg {
+		return clearStatusMsg{}
+	})
+}
+
+// parseDate parses a date string in various formats
+// Supports: YYYY-MM-DD, MM-DD (current year), DD (current month)
+func (m *model) parseDate(dateStr string) (time.Time, error) {
+	now := m.calendar.Cursor()
+
+	// Try full date format: YYYY-MM-DD
+	if t, err := time.Parse("2006-01-02", dateStr); err == nil {
+		return t, nil
+	}
+
+	// Try MM-DD format (current year)
+	if t, err := time.Parse("01-02", dateStr); err == nil {
+		return time.Date(now.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+	}
+
+	// Try DD format (current month and year)
+	if t, err := time.Parse("02", dateStr); err == nil {
+		return time.Date(now.Year(), now.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+	}
+
+	return time.Time{}, fmt.Errorf("invalid date format")
+}
+
+// parseTimeInput parses time input string and returns start and end times
+// Supports formats: "HH:MM" (default 1 hour duration) or "HH:MM-HH:MM"
+func (m *model) parseTimeInput(input string) (string, string, error) {
+	// Try range format: HH:MM-HH:MM
+	if len(input) == 11 && input[5] == '-' {
+		startStr := input[:5]
+		endStr := input[6:]
+		if _, err := time.Parse("15:04", startStr); err != nil {
+			return "", "", fmt.Errorf("invalid start time")
+		}
+		if _, err := time.Parse("15:04", endStr); err != nil {
+			return "", "", fmt.Errorf("invalid end time")
+		}
+		return startStr, endStr, nil
+	}
+
+	// Try single time format: HH:MM (default 1 hour)
+	if _, err := time.Parse("15:04", input); err == nil {
+		endTime := m.addHourToTime(input)
+		return input, endTime, nil
+	}
+
+	return "", "", fmt.Errorf("invalid time format")
+}
+
+// addHourToTime adds 1 hour to a time string in HH:MM format
+func (m *model) addHourToTime(timeStr string) string {
+	t, err := time.Parse("15:04", timeStr)
+	if err != nil {
+		return "00:00"
+	}
+	return t.Add(time.Hour).Format("15:04")
+}
+
+// findOriginalTodoIndex finds the original index of an unscheduled task in the full todo list
+func (m *model) findOriginalTodoIndex(unscheduledIdx int) int {
+	cursorDate := m.calendar.Cursor()
+	todos := m.todoService.GetTodosForDate(cursorDate)
+
+	unscheduledCount := 0
+	for i, td := range todos {
+		if !td.IsScheduled() {
+			if unscheduledCount == unscheduledIdx {
+				return i
+			}
+			unscheduledCount++
+		}
+	}
+	return -1
+}
+
 func (m *model) Init() tea.Cmd {
 	m.syncCalendarTodos()
 	m.updateTodos()
@@ -143,6 +243,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case clearStatusMsg:
+		m.statusMessage = ""
+		m.statusType = ""
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.viewRenderer.SetSize(msg.Width, msg.Height)
 
@@ -173,11 +278,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.state {
+		case ui.StateHelp:
+			// Ctrl+C quits from help modal
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			// Any other key closes the help modal
+			m.state = ui.StateViewing
+			return m, nil
+
 		case ui.StateViewing:
 			switch msg.String() {
 			case "q", "ctrl+c":
 				m.todoService.Persist()
 				return m, tea.Quit
+			case "?":
+				m.state = ui.StateHelp
+				return m, nil
 			case "a":
 				m.state = ui.StateEditing
 				m.editingIndex = -1
@@ -190,6 +307,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.focus == ui.FocusCalendar {
 					m.focus = ui.FocusTodo
 				} else {
+					m.focus = ui.FocusCalendar
+				}
+			case "shift+tab":
+				if m.focus == ui.FocusTodo {
 					m.focus = ui.FocusCalendar
 				}
 			case "/":
@@ -205,12 +326,271 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateTodos()
 					return m, nil
 				}
+			case "d":
+				// Switch to Day View (only when in calendar focus and not in todo panel)
+				if m.focus == ui.FocusCalendar {
+					m.calendar.SetViewMode(calendar.DayView)
+					m.updateTodos()
+					return m, nil
+				}
+			case "m":
+				// Switch to Month View
+				if m.focus == ui.FocusCalendar {
+					m.calendar.SetViewMode(calendar.MonthView)
+					m.updateTodos()
+					return m, nil
+				}
+			case "g":
+				// Open go-to-date modal
+				if m.focus == ui.FocusCalendar {
+					m.state = ui.StateGoToDate
+					m.dateInput.Reset()
+					m.dateError = ""
+					return m, m.dateInput.Focus()
+				}
 			}
 
 			switch m.focus {
 			case ui.FocusCalendar:
-				if msg.String() == "enter" {
-					m.focus = ui.FocusTodo
+				// Day View specific navigation
+				if m.calendar.GetViewMode() == calendar.DayView {
+					// T key toggles between List and Timeline modes
+					if msg.String() == "T" {
+						m.calendar.ToggleDayViewMode()
+						return m, nil
+					}
+
+					// Handle based on Day View mode
+					if m.calendar.GetDayViewMode() == calendar.DayViewModeList {
+						// List Mode navigation
+						switch msg.String() {
+						case "j", "down":
+							dateKey := m.calendar.Cursor().Format("2006-01-02")
+							if status, ok := m.calendar.GetTodoStatus()[dateKey]; ok {
+								m.calendar.MoveListSelection(1, len(status.Items))
+							}
+							return m, nil
+						case "k", "up":
+							dateKey := m.calendar.Cursor().Format("2006-01-02")
+							if status, ok := m.calendar.GetTodoStatus()[dateKey]; ok {
+								m.calendar.MoveListSelection(-1, len(status.Items))
+							}
+							return m, nil
+						case " ", "x":
+							// Toggle completion in List Mode
+							dateKey := m.calendar.Cursor().Format("2006-01-02")
+							if status, ok := m.calendar.GetTodoStatus()[dateKey]; ok && len(status.Items) > 0 {
+								idx := m.calendar.GetSelectedListItem()
+								if idx < len(status.Items) {
+									cursorDate := m.calendar.Cursor()
+									m.todoService.ToggleComplete(cursorDate, idx)
+									m.updateTodos()
+									return m, m.setStatus("Toggled completion", "success")
+								}
+							}
+							return m, nil
+						case "e", "enter":
+							// Edit task in List Mode
+							dateKey := m.calendar.Cursor().Format("2006-01-02")
+							if status, ok := m.calendar.GetTodoStatus()[dateKey]; ok && len(status.Items) > 0 {
+								idx := m.calendar.GetSelectedListItem()
+								if idx < len(status.Items) {
+									todos := m.todoService.GetTodosForDate(m.calendar.Cursor())
+									if idx < len(todos) {
+										m.state = ui.StateEditing
+										m.editingIndex = idx
+										m.titleInput.SetValue(todos[idx].Title)
+										m.descInput.SetValue(todos[idx].Desc)
+										m.editingPriority = todos[idx].Priority
+										m.editFocus = ui.FocusTitle
+										return m, m.titleInput.Focus()
+									}
+								}
+							}
+							return m, nil
+						case "esc":
+							// Go back from Day View
+							m.calendar.GoBack()
+							m.calendar.ResetDayViewSelection()
+							m.updateTodos()
+							return m, nil
+						}
+					} else {
+						// Timeline Mode navigation
+						switch msg.String() {
+						case "tab":
+							m.calendar.ToggleDayViewFocus()
+							return m, nil
+						case "j", "down":
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								m.calendar.MoveTimelineCursor(1)
+							} else {
+								unscheduled := m.calendar.GetUnscheduledItems()
+								m.calendar.MoveUnscheduledSelection(1, len(unscheduled))
+							}
+							return m, nil
+						case "k", "up":
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								m.calendar.MoveTimelineCursor(-1)
+							} else {
+								unscheduled := m.calendar.GetUnscheduledItems()
+								m.calendar.MoveUnscheduledSelection(-1, len(unscheduled))
+							}
+							return m, nil
+						case "enter":
+							// Cursor-based scheduling: assign selected unscheduled task to timeline cursor
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								unscheduled := m.calendar.GetUnscheduledItems()
+								if len(unscheduled) > 0 {
+									selIdx := m.calendar.GetSelectedUnscheduledIndex()
+									// Find original index in full list
+									origIdx := m.findOriginalTodoIndex(selIdx)
+									if origIdx >= 0 {
+										startTime := m.calendar.GetTimelineCursorTime()
+										endTime := m.addHourToTime(startTime)
+										cursorDate := m.calendar.Cursor()
+										m.todoService.ScheduleTodo(cursorDate, origIdx, startTime, endTime)
+										m.updateTodos()
+										return m, m.setStatus("Scheduled at "+startTime, "success")
+									}
+								}
+							} else {
+								// Switch to timeline focus
+								m.calendar.SetDayViewFocus(calendar.DayViewFocusTimeline)
+							}
+							return m, nil
+						case "s":
+							// Quick schedule input
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusUnscheduled {
+								unscheduled := m.calendar.GetUnscheduledItems()
+								if len(unscheduled) > 0 {
+									selIdx := m.calendar.GetSelectedUnscheduledIndex()
+									origIdx := m.findOriginalTodoIndex(selIdx)
+									if origIdx >= 0 && selIdx < len(unscheduled) {
+										m.state = ui.StateScheduling
+										m.schedulingTaskIdx = origIdx
+										m.scheduleInput.Reset()
+										m.scheduleError = ""
+										return m, m.scheduleInput.Focus()
+									}
+								}
+							}
+							return m, nil
+						case "u":
+							// Unschedule task
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								scheduled := m.calendar.GetScheduledItems()
+								if len(scheduled) > 0 {
+									// Find the task at current timeline cursor
+									cursorTime := m.calendar.GetTimelineCursorTime()
+									cursorDate := m.calendar.Cursor()
+									todos := m.todoService.GetTodosForDate(cursorDate)
+									for i, td := range todos {
+										if td.StartTime != nil && *td.StartTime == cursorTime {
+											m.todoService.UnscheduleTodo(cursorDate, i)
+											m.updateTodos()
+											return m, m.setStatus("Task unscheduled", "info")
+										}
+									}
+								}
+							}
+							return m, nil
+						case "+", "=":
+							// Extend duration
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								cursorTime := m.calendar.GetTimelineCursorTime()
+								cursorDate := m.calendar.Cursor()
+								todos := m.todoService.GetTodosForDate(cursorDate)
+								for i, td := range todos {
+									if td.StartTime != nil && *td.StartTime == cursorTime {
+										newEnd, _ := m.todoService.AdjustTodoDuration(cursorDate, i, 30, 30)
+										if newEnd != "" {
+											m.updateTodos()
+											return m, m.setStatus("Extended to "+newEnd, "info")
+										}
+										return m, m.setStatus("Cannot extend further", "warning")
+									}
+								}
+							}
+							return m, nil
+						case "-", "_":
+							// Shrink duration
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								cursorTime := m.calendar.GetTimelineCursorTime()
+								cursorDate := m.calendar.Cursor()
+								todos := m.todoService.GetTodosForDate(cursorDate)
+								for i, td := range todos {
+									if td.StartTime != nil && *td.StartTime == cursorTime {
+										newEnd, _ := m.todoService.AdjustTodoDuration(cursorDate, i, -30, 30)
+										if newEnd != "" {
+											m.updateTodos()
+											return m, m.setStatus("Shrunk to "+newEnd, "info")
+										}
+										return m, m.setStatus("Minimum duration reached", "warning")
+									}
+								}
+							}
+							return m, nil
+						case "J":
+							// Move scheduled task later (Shift+J)
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								cursorTime := m.calendar.GetTimelineCursorTime()
+								cursorDate := m.calendar.Cursor()
+								todos := m.todoService.GetTodosForDate(cursorDate)
+								config := m.calendar.GetTimelineConfig()
+								for i, td := range todos {
+									if td.StartTime != nil && *td.StartTime == cursorTime {
+										newStart, _ := m.todoService.RescheduleTodo(cursorDate, i, config.MoveMinutes, config.DayStart, config.DayEnd)
+										if newStart != "" {
+											// Update timeline cursor to follow the task
+											m.calendar.MoveTimelineCursor(1)
+											m.updateTodos()
+											return m, m.setStatus("Moved to "+newStart, "info")
+										}
+										return m, m.setStatus("Cannot move later", "warning")
+									}
+								}
+							}
+							return m, nil
+						case "K":
+							// Move scheduled task earlier (Shift+K)
+							if m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline {
+								cursorTime := m.calendar.GetTimelineCursorTime()
+								cursorDate := m.calendar.Cursor()
+								todos := m.todoService.GetTodosForDate(cursorDate)
+								config := m.calendar.GetTimelineConfig()
+								for i, td := range todos {
+									if td.StartTime != nil && *td.StartTime == cursorTime {
+										newStart, _ := m.todoService.RescheduleTodo(cursorDate, i, -config.MoveMinutes, config.DayStart, config.DayEnd)
+										if newStart != "" {
+											// Update timeline cursor to follow the task
+											m.calendar.MoveTimelineCursor(-1)
+											m.updateTodos()
+											return m, m.setStatus("Moved to "+newStart, "info")
+										}
+										return m, m.setStatus("Cannot move earlier", "warning")
+									}
+								}
+							}
+							return m, nil
+						case "esc":
+							// Go back from Day View
+							m.calendar.GoBack()
+							m.calendar.ResetDayViewSelection()
+							m.updateTodos()
+							return m, nil
+						}
+					}
+				} else {
+					// Non-Day View calendar navigation
+					switch msg.String() {
+					case "enter":
+						m.focus = ui.FocusTodo
+					case "esc":
+						// Go back one view level (Day -> Week -> Month)
+						m.calendar.GoBack()
+						m.updateTodos()
+					}
 				}
 			case ui.FocusTodo:
 				switch msg.String() {
@@ -233,8 +613,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.todo.SelectedItem() != nil {
 						cursorDate := m.calendar.Cursor()
 						idx := m.todo.ListIndex()
+						selectedItem := m.todo.SelectedItem().(ui.TodoItem)
+						wasComplete := selectedItem.Todo.Complete
 						m.todoService.ToggleComplete(cursorDate, idx)
 						m.updateTodos()
+						if wasComplete {
+							return m, m.setStatus("Marked incomplete", "info")
+						}
+						return m, m.setStatus("Marked complete", "success")
 					}
 				case "d", "backspace":
 					selectedItem := m.todo.SelectedItem()
@@ -249,18 +635,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cursorDate := m.calendar.Cursor()
 						idx := m.todo.ListIndex()
 						var priority domain.Priority
+						var priorityName string
 						switch msg.String() {
 						case "0":
 							priority = domain.PriorityNone
+							priorityName = "None"
 						case "1":
 							priority = domain.PriorityLow
+							priorityName = "Low"
 						case "2":
 							priority = domain.PriorityMedium
+							priorityName = "Medium"
 						case "3":
 							priority = domain.PriorityHigh
+							priorityName = "High"
 						}
 						m.todoService.SetPriority(cursorDate, idx, priority)
 						m.updateTodos()
+						return m, m.setStatus("Priority: "+priorityName, "priority")
 					}
 				case "J", "K":
 					// Move todo up/down (reorder)
@@ -288,7 +680,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.todoService.Delete(cursorDate, m.deletingIndex)
 				m.updateTodos()
 				m.state = ui.StateViewing
-				return m, nil
+				return m, m.setStatus("Todo deleted", "warning")
 			case "n", "N", "esc":
 				// Cancel delete
 				m.state = ui.StateViewing
@@ -355,7 +747,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = ui.StateViewing
 					m.titleInput.Blur()
 					m.descInput.Blur()
-					return m, nil
+					return m, m.setStatus("Todo saved", "success")
 				}
 			}
 
@@ -389,6 +781,63 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Update search input and perform search
 				m.searchInput, cmd = m.searchInput.Update(msg)
 				m.performSearch(m.searchInput.Value())
+				return m, cmd
+			}
+
+		case ui.StateGoToDate:
+			switch msg.String() {
+			case "esc":
+				m.state = ui.StateViewing
+				m.dateInput.Blur()
+				m.dateError = ""
+				return m, nil
+			case "enter":
+				// Parse and jump to date
+				dateStr := m.dateInput.Value()
+				parsedDate, err := m.parseDate(dateStr)
+				if err != nil {
+					m.dateError = "Invalid date format"
+					return m, nil
+				}
+				m.calendar.SetCursor(parsedDate)
+				m.updateTodos()
+				m.state = ui.StateViewing
+				m.dateInput.Blur()
+				m.dateError = ""
+				return m, m.setStatus("Jumped to "+parsedDate.Format("Jan 2, 2006"), "success")
+			default:
+				// Update date input
+				m.dateInput, cmd = m.dateInput.Update(msg)
+				m.dateError = "" // Clear error on typing
+				return m, cmd
+			}
+
+		case ui.StateScheduling:
+			switch msg.String() {
+			case "esc":
+				m.state = ui.StateViewing
+				m.scheduleInput.Blur()
+				m.scheduleError = ""
+				return m, nil
+			case "enter":
+				// Parse and schedule
+				timeStr := m.scheduleInput.Value()
+				startTime, endTime, err := m.parseTimeInput(timeStr)
+				if err != nil {
+					m.scheduleError = "Invalid format (HH:MM or HH:MM-HH:MM)"
+					return m, nil
+				}
+				cursorDate := m.calendar.Cursor()
+				m.todoService.ScheduleTodo(cursorDate, m.schedulingTaskIdx, startTime, endTime)
+				m.updateTodos()
+				m.state = ui.StateViewing
+				m.scheduleInput.Blur()
+				m.scheduleError = ""
+				return m, m.setStatus("Scheduled at "+startTime, "success")
+			default:
+				// Update schedule input
+				m.scheduleInput, cmd = m.scheduleInput.Update(msg)
+				m.scheduleError = "" // Clear error on typing
 				return m, cmd
 			}
 		}
@@ -425,8 +874,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
+	// Check if terminal is too small
+	if m.viewRenderer.IsTooSmall() {
+		return m.viewRenderer.RenderSizeWarning()
+	}
+
 	var content string
-	helpBar := m.viewRenderer.RenderHelpBar(m.state, m.focus)
+
+	// Build Day View context for help bar
+	dayViewCtx := ui.DayViewContext{
+		IsInDayView: m.calendar.GetViewMode() == calendar.DayView,
+		IsListMode:  m.calendar.GetDayViewMode() == calendar.DayViewModeList,
+		IsTimeline:  m.calendar.GetDayViewFocus() == calendar.DayViewFocusTimeline,
+	}
+	helpBar := m.viewRenderer.RenderHelpBarWithDayView(m.state, m.focus, dayViewCtx)
 
 	switch m.state {
 	case ui.StateViewing:
@@ -473,10 +934,43 @@ func (m *model) View() string {
 		}
 		content = m.viewRenderer.RenderSearching(searchState)
 
+	case ui.StateHelp:
+		content = m.viewRenderer.RenderHelp()
+
+	case ui.StateGoToDate:
+		goToDateState := ui.GoToDateState{
+			InputView:  m.dateInput.View(),
+			InputValue: m.dateInput.Value(),
+			ErrorMsg:   m.dateError,
+		}
+		content = m.viewRenderer.RenderGoToDate(goToDateState)
+
+	case ui.StateScheduling:
+		// Get task title for the scheduling modal
+		taskTitle := ""
+		cursorDate := m.calendar.Cursor()
+		todos := m.todoService.GetTodosForDate(cursorDate)
+		if m.schedulingTaskIdx >= 0 && m.schedulingTaskIdx < len(todos) {
+			taskTitle = todos[m.schedulingTaskIdx].Title
+		}
+		schedulingState := ui.SchedulingState{
+			TaskTitle:  taskTitle,
+			TaskIndex:  m.schedulingTaskIdx,
+			InputView:  m.scheduleInput.View(),
+			InputValue: m.scheduleInput.Value(),
+			ErrorMsg:   m.scheduleError,
+		}
+		content = m.viewRenderer.RenderScheduling(schedulingState)
+
 	default:
 		return "unknown state"
 	}
 
+	// Build the final view with optional status message
+	statusMsg := m.viewRenderer.RenderStatusMessage(m.statusMessage, m.statusType)
+	if statusMsg != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, content, statusMsg, helpBar)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, content, helpBar)
 }
 
@@ -496,14 +990,14 @@ func main() {
 
 	// Initialize Title Input
 	ti := textinput.New()
-	ti.Placeholder = "Buy milk..."
+	ti.Placeholder = "What needs to be done?"
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 56
 
 	// Initialize Description Input
 	ta := textarea.New()
-	ta.Placeholder = "Add detailed notes, links, or any information..."
+	ta.Placeholder = "Add details (Markdown supported)..."
 	ta.KeyMap.InsertNewline.SetEnabled(true) // Allow newlines in description
 	ta.SetWidth(56)
 	ta.SetHeight(8)
@@ -513,6 +1007,18 @@ func main() {
 	si.Placeholder = "Search todos..."
 	si.CharLimit = 100
 	si.Width = 38
+
+	// Initialize Date Input
+	di := textinput.New()
+	di.Placeholder = "YYYY-MM-DD"
+	di.CharLimit = 10
+	di.Width = 20
+
+	// Initialize Schedule Input
+	sci := textinput.New()
+	sci.Placeholder = "09:00 or 09:00-10:30"
+	sci.CharLimit = 11
+	sci.Width = 20
 
 	// Initialize Markdown Renderer
 	mdRenderer := ui.NewMarkdownRenderer(40) // Initial width, will be resized
@@ -526,11 +1032,13 @@ func main() {
 		viewRenderer:    viewRenderer,
 
 		// UI Components
-		calendar:    calendar.New(),
-		todo:        todo.New(),
-		titleInput:  ti,
-		descInput:   ta,
-		searchInput: si,
+		calendar:      calendar.New(),
+		todo:          todo.New(),
+		titleInput:    ti,
+		descInput:     ta,
+		searchInput:   si,
+		dateInput:     di,
+		scheduleInput: sci,
 
 		// State
 		state:        ui.StateViewing,
