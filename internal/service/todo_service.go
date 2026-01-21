@@ -151,3 +151,116 @@ func (s *TodoService) GetAllTodos() map[string][]domain.Todo {
 func (s *TodoService) Persist() error {
 	return s.repo.Persist()
 }
+
+// ScheduleTodo assigns start and end times to a todo
+func (s *TodoService) ScheduleTodo(date time.Time, index int, startTime, endTime string) error {
+	todos := s.repo.GetByDate(date)
+	if index < 0 || index >= len(todos) {
+		return nil
+	}
+	todos[index].StartTime = &startTime
+	todos[index].EndTime = &endTime
+	return s.repo.Save(date, index, todos[index])
+}
+
+// UnscheduleTodo removes the scheduled time from a todo
+func (s *TodoService) UnscheduleTodo(date time.Time, index int) error {
+	todos := s.repo.GetByDate(date)
+	if index < 0 || index >= len(todos) {
+		return nil
+	}
+	todos[index].StartTime = nil
+	todos[index].EndTime = nil
+	return s.repo.Save(date, index, todos[index])
+}
+
+// AdjustTodoDuration extends or shrinks a scheduled todo's duration
+// deltaMinutes can be positive (extend) or negative (shrink)
+// Returns the new end time or empty string if adjustment failed
+func (s *TodoService) AdjustTodoDuration(date time.Time, index int, deltaMinutes int, minSlotMinutes int) (string, error) {
+	todos := s.repo.GetByDate(date)
+	if index < 0 || index >= len(todos) {
+		return "", nil
+	}
+	todo := todos[index]
+	if todo.StartTime == nil || todo.EndTime == nil {
+		return "", nil
+	}
+
+	start, err := time.Parse("15:04", *todo.StartTime)
+	if err != nil {
+		return "", nil
+	}
+	end, err := time.Parse("15:04", *todo.EndTime)
+	if err != nil {
+		return "", nil
+	}
+
+	newEnd := end.Add(time.Duration(deltaMinutes) * time.Minute)
+	minEnd := start.Add(time.Duration(minSlotMinutes) * time.Minute)
+
+	// Enforce minimum duration
+	if newEnd.Before(minEnd) {
+		return "", nil
+	}
+
+	newEndStr := newEnd.Format("15:04")
+	todos[index].EndTime = &newEndStr
+	if err := s.repo.Save(date, index, todos[index]); err != nil {
+		return "", err
+	}
+	return newEndStr, nil
+}
+
+// RescheduleTodo moves a scheduled todo to a new time by delta minutes
+// deltaMinutes can be positive (later) or negative (earlier)
+// dayStart and dayEnd are boundaries in "HH:MM" format
+// Returns the new start time, or empty string if movement would exceed boundaries
+func (s *TodoService) RescheduleTodo(date time.Time, index int, deltaMinutes int, dayStart, dayEnd string) (string, error) {
+	todos := s.repo.GetByDate(date)
+	if index < 0 || index >= len(todos) {
+		return "", nil
+	}
+	todo := todos[index]
+	if todo.StartTime == nil || todo.EndTime == nil {
+		return "", nil
+	}
+
+	start, err := time.Parse("15:04", *todo.StartTime)
+	if err != nil {
+		return "", nil
+	}
+	end, err := time.Parse("15:04", *todo.EndTime)
+	if err != nil {
+		return "", nil
+	}
+
+	// Parse boundaries
+	dayStartTime, err := time.Parse("15:04", dayStart)
+	if err != nil {
+		return "", nil
+	}
+	dayEndTime, err := time.Parse("15:04", dayEnd)
+	if err != nil {
+		return "", nil
+	}
+
+	// Calculate new times
+	delta := time.Duration(deltaMinutes) * time.Minute
+	newStart := start.Add(delta)
+	newEnd := end.Add(delta)
+
+	// Check boundaries
+	if newStart.Before(dayStartTime) || newEnd.After(dayEndTime) {
+		return "", nil // Cannot move past boundaries
+	}
+
+	newStartStr := newStart.Format("15:04")
+	newEndStr := newEnd.Format("15:04")
+	todos[index].StartTime = &newStartStr
+	todos[index].EndTime = &newEndStr
+	if err := s.repo.Save(date, index, todos[index]); err != nil {
+		return "", err
+	}
+	return newStartStr, nil
+}

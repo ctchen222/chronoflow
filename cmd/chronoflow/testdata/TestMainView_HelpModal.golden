@@ -1,0 +1,30 @@
+[?25l[?2004h                  ╭──────────────────────────────────────────────────────────────╮                  
+                  │                                                              │                  
+                  │                      Keyboard Reference                      │                  
+                  │                                                              │                  
+                  │                                                              │                  
+                  │   Navigation                      Todo Actions               │                  
+                  │   ──────────                      ────────────               │                  
+                  │   h/j/k/l     Move cursor         Space/x     Toggle done    │                  
+                  │   b/n         Prev/next month     a           Add todo       │                  
+                  │   w           Toggle week view    e/Enter     Edit todo      │                  
+                  │   d           Day view            d           Delete todo    │                  
+                  │   m           Month view          1/2/3/0     Set priority   │                  
+                  │   t           Jump to today       J/K         Reorder        │                  
+                  │   g           Go to date                                     │                  
+                  │                                                              │                  
+                  │                                                              │                  
+                  │   Edit Mode                       General                    │                  
+                  │   ─────────                       ───────                    │                  
+                  │   Tab         Switch field        Tab         Switch panel   │                  
+                  │   Ctrl+P      Preview markdown    Esc         Back/Cancel    │                  
+                  │   Enter       Save                /           Search         │                  
+                  │   Esc         Cancel              ?           This help      │                  
+                  │                                   q           Quit           │                  
+                  │                                                              │                  
+                  │                                                              │                  
+                  │                    Press any key to close                    │                  
+                  │                                                              │                  
+                  ╰──────────────────────────────────────────────────────────────╯                  
+                                                                                                    
+                                           any key close                                            [2K[?2004l[?25h[?1002l[?1003l[?1006l

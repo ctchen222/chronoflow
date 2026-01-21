@@ -39,13 +39,24 @@ func (a *CalendarAdapter) BuildTodoStatus(allTodos map[string][]domain.Todo) map
 		isOverdue := a.statsCalc.IsDateOverdue(items, date)
 		allComplete := a.statsCalc.AreAllComplete(items)
 
-		// Convert items to calendar.TodoItem for week view display
+		// Convert items to calendar.TodoItem for week/day view display
 		calendarItems := make([]calendar.TodoItem, len(items))
 		for i, it := range items {
+			startTime := ""
+			endTime := ""
+			if it.StartTime != nil {
+				startTime = *it.StartTime
+			}
+			if it.EndTime != nil {
+				endTime = *it.EndTime
+			}
 			calendarItems[i] = calendar.TodoItem{
-				Title:    it.Title,
-				Complete: it.Complete,
-				Priority: int(it.Priority),
+				Title:     it.Title,
+				Desc:      it.Desc,
+				Complete:  it.Complete,
+				Priority:  int(it.Priority),
+				StartTime: startTime,
+				EndTime:   endTime,
 			}
 		}
 
